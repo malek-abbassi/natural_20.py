@@ -180,6 +180,339 @@ class OllamaInterfacer(LLMInterfacer):
 
         return info["available_moves"][choice - 1] if choice > 0 else random.choice(info["available_moves"])
 
+
+
+
+
+
+
+
+
+
+class OGPT4Interfacer(LLMInterfacer):
+    def __init__(self, variant="gpt-4.1", debug=False, api_key=None, base_url=None, tools=False, explain=False, weapon_mappings=None, max_retries=4, name="Bob"):
+        """
+        Args:
+            api_key: the openai api key to use
+            variant: the variant of the model to use, e.g. gpt-4o, gpt-4, etc.
+            debug: whether to print debug information
+        """
+        super().__init__(debug, explain=explain)
+
+        if api_key is None and base_url is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if api_key is None:
+                raise ValueError("Please set the OPENAI_API_KEY environment variable")
+
+        self.variant = variant
+        self.debug = debug
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            max_retries=max_retries
+        )
+        self.name = name
+        self.memory = []
+        self.summary = "This is the first turn of the combat, nothing has happened yet."
+        self.ongoing_conversation = []
+        if tools:
+            self.tools = [
+                {
+                    "type": "function",
+                    "function": {
+                    "name": "get_action",
+                    "description": "get action for agent to execute",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        "action": {
+                            "type": "integer",
+                            "description": "action to take",
+                        }
+                        },
+                        "required": ["action"],
+                    },
+                    }
+                }
+            ]
+        else:
+            self.tools = None
+        self.dev_prompt = self.make_dev_prompt()
+
+        self.functions = [
+            {
+                "name": "read_action",
+                "description": "Reads the action the character wants to perform in order to communicate it to the simulation.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action_id": {
+                            "type": "integer",
+                            "description": "Identifier of the chosen action as indicated in the last message"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Decription of the chosen action as indicated in the last message"
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "Explanation of why you decided to make this action"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "In case the chosen action is to communicate, the content of the message that should be sent to your allies."
+                        }
+                    }
+                }
+            }
+        ]
+    
+
+    def make_dev_prompt(self):
+        prompt = ""
+        prompt += f"We are playing a game of Dungeons and Dragons 5th Edition. You play and are referred to as {self.name}.\n"
+        # prompt += f"The user will be giving you details on the current situation that your character is in along with a short summary of what happened previously. He will then ask you whether you want to take actions or not.\n"
+        # prompt += f"You will communicate your will by using a properly formatted JSON schema given to you. Do not generate output that isn’t in properly formatted JSON.\n"
+        # prompt += "\n\n\n"
+        # prompt += "Here is an example of the format you should use for your answers :\n\n"
+        # prompt += """
+        # {
+        #     "action": number corresponding to the desired action,
+        #     "description": string that explains the action,
+        #     "content": in case the chosen action is a communication, string containing the message to send to your allies,
+        # }
+        # """
+        # prompt += "\n\nHere is an example of how to use it :\n"
+        # prompt += """
+        # {
+        #     "action": <choice no.>,
+        #     "description": <choice description>,
+        #     "content": "I should have enough damage on my turn to deal with the gobelin, you can consider him dealt with and focus on the troll.
+        # }
+        # """
+        return prompt
+
+
+    def select_action_for_state(self, state, info, is_conversation = False):
+        state_prompt = self.dndenv_state_to_prompt(state, info)
+        if is_conversation:
+            assert (conversation !=None)
+            prompt = state_prompt + self.communication_prompting()
+        else:
+            prompt = state_prompt + self.action_prompting()
+        
+        # measure gpt-4o response time
+        start_time = time.time()
+
+        if self.debug:
+            print(f"prompt: -------------------------------\n{prompt}\n---------------------------------")
+        chat_completion = self.client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": self.dev_prompt
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model=self.variant,
+            functions = self.functions,
+            function_call = {
+                "name": "read_action"
+            }
+        )
+        # if self.tools:
+        #     orig_response = chat_completion.choices[0].message.tool_calls[0].function.arguments
+            
+        # else:
+        #     orig_response = chat_completion.choices[0].message.content
+        #     digit_response = ""
+
+        #     # skip the initial non-digit characters
+        #     encountered_digit = False
+
+        #     for char in orig_response:
+        #         if char.isdigit():
+        #             encountered_digit = True
+        #             digit_response += char
+        #         else:
+        #             if encountered_digit:
+        #                 break
+
+        # try:
+        #     if self.tools:
+        #         json_response = json.loads(orig_response)
+        #         if self.debug:
+        #             print(json_response)
+        #         digit_response = json_response['action']
+
+        #     end_time = time.time()
+        #     if self.debug:
+        #         print(f"response time: {end_time - start_time}")
+
+        #     if int(digit_response) == 0:
+        #         action = (-1, (0, 0), (0, 0), 0, 0)
+        #     else:
+        #         action = info['available_moves'][int(digit_response) - 1]
+        # except Exception as e:
+        #     print(e)
+        #     print(f"unusual response: {orig_response}")
+        #     action = random.choice(info['available_moves']) # assign random action instead
+        arguments = json.loads(chat_completion.choices[0].message.function_call.arguments)
+        action = arguments["action"]
+        description = arguments["description"]
+        explanation = arguments["explanation"]
+        self.update_summary(state_prompt, action, description, explanation)
+        content = None
+        if action == 1000:
+            content = arguments["content"]
+        return (action, content)
+
+    def dndenv_state_to_prompt(self, state, info):
+        map = state["map"]
+        actions, bonus_actions, reactions = state["turn_info"]
+        player_type = state["player_type"][0]
+        enemy_type = state["enemy_type"][0]
+
+        entity_mappings = info["entity_mappings"]
+        # swap values to keys for entity mappings
+        entity_mappings = {v: k for k, v in entity_mappings.items()}
+        player_type_str = entity_mappings.get(player_type, "")
+        enemy_type_str = entity_mappings.get(enemy_type, "")
+        # split class type and level from player_type_str separated by a  "-" for example fighter-1
+        player_type_str, player_level = player_type_str.split("-")
+        enemy_type_str, enemy_level = enemy_type_str.split("-")
+
+        health_pct = state["health_pct"]
+        health_enemy = state["health_enemy"]
+        movement = state["movement"]
+
+        conditions = state["conditions"]
+        is_prone, is_dodging, is_grappled, is_disengaging, _, _, _, _ = conditions
+        is_enemy_prone, is_enemy_dodging, is_enemy_grappled, is_enemy_disengaging, _, _, _, _  = state["enemy_conditions"]
+
+        instruction_prompt = "It is currently your turn\n" + \
+                             f"Your hero character (a level {player_level} {player_type_str}) is denoted by P. And you have an enemy donoted by E (a level {enemy_level} {enemy_type_str})which you must defeat. \n"
+        instruction_prompt += f"Your health is at {health_pct*100}% specifically {info['health']}/{info['max_health']} \n"
+        instruction_prompt += f"Your Enemies health is at {health_enemy*100}%\n"
+        instruction_prompt += "Your current conditions are:\n"
+        if is_prone:
+            instruction_prompt += "Currently Prone\n"
+
+        if is_dodging:
+            instruction_prompt += "Currently Dodging\n"
+
+        if is_disengaging:
+            instruction_prompt += "Currently Disengaging\n"
+
+        instruction_prompt += "Your enemies current conditions are:\n"
+        if is_enemy_prone:
+            instruction_prompt += "Currently Prone\n"
+
+        if is_enemy_dodging:
+            instruction_prompt += "Currently Dodging\n"
+
+        if is_enemy_disengaging:
+            instruction_prompt += "Currently Disengaging\n"
+
+        instruction_prompt += "You have the following available actions and movement available:\n\n"
+        instruction_prompt += f"Available movement: {movement}ft\n"
+        instruction_prompt += f"Available actions: {actions}\n"
+        instruction_prompt += f"Bonus actions: {bonus_actions}\n"
+        instruction_prompt += f"Reactions: {reactions}\n\n"
+        spell_slots = state["spell_slots"]
+        for level, slots in enumerate(spell_slots):
+            if slots > 0:
+                instruction_prompt += f"Spell Slot Level {level + 1}: {slots} slots\n"
+        prompt = instruction_prompt
+        prompt += self.map_to_prompt(map)
+
+        prompt += "\n Here is a shirt summary of what happened previously :\n"
+        prompt += self.summary
+        prompt += "\n"
+
+        if info.get('trigger', False):
+            prompt += f"Note that this is not really your turn but a Reaction for {info['trigger']}:"
+        prompt += actions_to_prompt(info['available_moves'], info["weapon_mappings"], info["spell_mappings"])
+        prompt += "-1: communicate with my allies\n"
+        
+        return prompt
+
+    def action_prompting(self):
+        prompt = ""
+        prompt += "\n\nPlease choose what you want to do in this situation by using the JSON format given to you before."
+        return prompt
+
+    def communication_prompting(self, include_answer_prompting = True):
+        prompt = ""
+        prompt += "This is not really your turn but rather an ongoing discussion between your allies. Here is the content of the discussion so far :"
+        for speaker, content in self.conversation:
+            prompt += f"\n\n{speaker} : {content}"
+        if include_answer_prompting:
+            prompt += "\n\nSince this is a conversation, please choose what you want to say in the current situation or if you want to pass the communication. The corresponding actions are\n- -3 : Pass/end the communication\n- -2 : Answer the communication"
+        return prompt
+    
+    def register_conversation(self, sender, content):
+        self.conversation.append((sender, content))
+    
+    def initiate_conversation(self):
+        self.conversation = []
+    
+    def close_conversation(self):
+        pass
+    
+    def update_summary(self, state, info, action, description, explanation, is_conversation):
+        state_prompt = self.dndenv_state_to_prompt(state, info)
+        if not is_conversation:
+            prompt = state_prompt + f"In this situation you chose to perform the action:\n{action}: {description}\nYour reasonning being : {explanation}"
+        else:
+            prompt = state_prompt + self.communication_prompting(include_answer_prompting=False) + f"\nThis conversation has now been concluded."
+        
+        # measure gpt-4o response time
+        start_time = time.time()
+
+        summary_prompt = f"In the previous message, you can see the current state and decisions that the player '{self.name}' and his party took while playing a Dungeon and Dragon combat encounter. Please rewrite the following summary of '{self.name}' situation in order to accomodate for the evolution of the situation. Give particular care to the intentions and plans for the future that were though of.\n\nThe original summary was :\n{self.summary}"
+
+        if self.debug:
+            print(f"prompt: -------------------------------\n{prompt}\n---------------------------------")
+        chat_completion = self.client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are summary tool for a player of Dungeon and Dragon. When given a summary of the previous situation of that player along with the current state and it's most recent decision or conversation, you rewrite the previous summary so as to remove the informations that are no longer true or relevant and add the new informations.\nIn particular, you keep track of the internal chain of thoughs of the player so that he can remember what was his plan.\n\nYou only answer by giving the rewritten summary and no other interaction with the user or explanation."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                },
+                {
+                    "role": "user",
+                    "content": summary_prompt,
+                }
+            ],
+            model=self.variant,
+            functions = self.functions,
+            function_call = {
+                "name": "read_action"
+            }
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class GPT4Interfacer(LLMInterfacer):
     def __init__(self, variant="NousResearch/Meta-Llama-3-8B-Instruct", debug=False, api_key=None, base_url=None, tools=False, explain=False, weapon_mappings=None, max_retries=4):
         """
@@ -194,7 +527,6 @@ class GPT4Interfacer(LLMInterfacer):
             api_key = os.getenv("OPENAI_API_KEY")
             if api_key is None:
                 raise ValueError("Please set the OPENAI_API_KEY environment variable")
-
         self.variant = variant
         self.debug = debug
         self.client = OpenAI(

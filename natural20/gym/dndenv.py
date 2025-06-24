@@ -422,6 +422,7 @@ class dndenv(gym.Env):
         enemies = [enemies] if not isinstance(enemies, list) else enemies
 
         for index, p in enumerate(heroes):
+            player_pos = None
             if index < len(self.hero_names):
                 name = self.hero_names[index]
 
@@ -440,6 +441,7 @@ class dndenv(gym.Env):
             self.players.append(('a', 'H', pc, player_pos))
 
         for index, p in enumerate(enemies):
+            enemy_pos = None
             if index < len(self.enemy_names):
                 name = self.enemy_names[index]
 
