@@ -23,33 +23,26 @@ class LLMInterfacer:
     def action(self, observation, info):
         return self.select_action_for_state(observation, info)
 
-    def dndenv_state_to_prompt(self, state, info):
+    def dndenv_state_to_prompt(self, state, info, players=None):
+        player_positions = {}
+        for el in players:
+            player_positions[(el[3][0], el[3][1])] = el[2].name
         map = state["map"]
         actions, bonus_actions, reactions = state["turn_info"]
         player_type = state["player_type"][0]
-        enemy_type = state["enemy_type"][0]
-
         entity_mappings = info["entity_mappings"]
         # swap values to keys for entity mappings
         entity_mappings = {v: k for k, v in entity_mappings.items()}
         player_type_str = entity_mappings.get(player_type, "")
-        enemy_type_str = entity_mappings.get(enemy_type, "")
-        # split class type and level from player_type_str separated by a  "-" for example fighter-1
         player_type_str, player_level = player_type_str.split("-")
-        enemy_type_str, enemy_level = enemy_type_str.split("-")
-
         health_pct = state["health_pct"]
-        health_enemy = state["health_enemy"]
         movement = state["movement"]
-
         conditions = state["conditions"]
         is_prone, is_dodging, is_grappled, is_disengaging, _, _, _, _ = conditions
-        is_enemy_prone, is_enemy_dodging, is_enemy_grappled, is_enemy_disengaging, _, _, _, _  = state["enemy_conditions"]
 
         instruction_prompt = "We are playing a game of Dungeons and Dragons 5th Edition. It is current your turn and you play \n" + \
-                             f"as a hero character denoted by P (a level {player_level} {player_type_str}). And you have an enemy donoted by E (a level {enemy_level} {enemy_type_str})which you must defeat. \n"
+                             f"as a hero character denoted by {self.name[0]} (a level {player_level} {player_type_str})."
         instruction_prompt += f"Your health is at {health_pct*100}% specifically {info['health']}/{info['max_health']} \n"
-        instruction_prompt += f"Your Enemies health is at {health_enemy*100}%\n"
         instruction_prompt += "Your current conditions are:\n"
         if is_prone:
             instruction_prompt += "Currently Prone\n"
@@ -59,16 +52,47 @@ class LLMInterfacer:
 
         if is_disengaging:
             instruction_prompt += "Currently Disengaging\n"
+        
+        
+        
+        enemy_types = state["enemy_type"]
+        health_enemy = state["health_enemy"]
+        instruction_prompt += f"\nYou have as enemies :"
+        for i, name in enumerate(state["enemy_name"]):
+            is_enemy_prone, is_enemy_dodging, is_enemy_grappled, is_enemy_disengaging, _, _, _, _  = state["enemy_conditions"][i]
+            enemy_type_str = entity_mappings.get(enemy_types[i], "")
+            enemy_type_str, enemy_level = enemy_type_str.split("-")
+            instruction_prompt += f"\n - {name} denoted by {name[0]} (a level {enemy_level} {enemy_type_str}).\n    Their health is currently at {health_enemy[i]*100}%."
+            instruction_prompt += "\n    Their current conditions are: "
+            if is_enemy_prone:
+                instruction_prompt += "Currently Prone, "
 
-        instruction_prompt += "Your enemies current conditions are:\n"
-        if is_enemy_prone:
-            instruction_prompt += "Currently Prone\n"
+            if is_enemy_dodging:
+                instruction_prompt += "Currently Dodging, "
 
-        if is_enemy_dodging:
-            instruction_prompt += "Currently Dodging\n"
+            if is_enemy_disengaging:
+                instruction_prompt += "Currently Disengaging"
+        instruction_prompt += "\nYou must defeat all of them in order to win.\n\n"
 
-        if is_enemy_disengaging:
-            instruction_prompt += "Currently Disengaging\n"
+
+        ally_types = state["ally_type"]
+        health_ally = state["health_ally"]
+        if len(ally_types) > 0:
+            instruction_prompt += f"You are helped in that regard by your allies :"
+            for i, name in enumerate(state["ally_name"]):
+                is_ally_prone, is_ally_dodging, is_ally_grappled, is_ally_disengaging, _, _, _, _  = state["ally_conditions"][i]
+                ally_type_str = entity_mappings.get(ally_types[i], "")
+                ally_type_str, ally_level = ally_type_str.split("-")
+                instruction_prompt += f"\n - {name} denoted by {name[0]} (a level {ally_level} {ally_type_str}).\n    Their health is currently at {health_ally[i]*100}%."
+                instruction_prompt += "\n    Their current conditions are: "
+                if is_ally_prone:
+                    instruction_prompt += "Currently Prone, "
+
+                if is_ally_dodging:
+                    instruction_prompt += "Currently Dodging, "
+
+                if is_ally_disengaging:
+                    instruction_prompt += "Currently Disengaging"
 
         instruction_prompt += "You have the following available actions and movement available:\n\n"
         instruction_prompt += f"Available movement: {movement}ft\n"
@@ -80,7 +104,7 @@ class LLMInterfacer:
             if slots > 0:
                 instruction_prompt += f"Spell Slot Level {level + 1}: {slots} slots\n"
         prompt = instruction_prompt
-        prompt += self.map_to_prompt(map)
+        prompt += self.map_to_prompt(map, player_positions)
         if info.get('trigger', False):
             prompt += f"Note that this is not really your turn but a Reaction for {info['trigger']}:"
         prompt += actions_to_prompt(info['available_moves'], info["weapon_mappings"], info["spell_mappings"])
@@ -99,14 +123,15 @@ class LLMInterfacer:
 
         return prompt
 
-    def map_to_prompt(self, map):
+    def map_to_prompt(self, map, player_positions):
         prompt =  "\n\nHere is a rough sketch of the map that considers line of sight to the enemy.\n"
 
         prompt += "Here is the map:\n"
+        field_view = len(map)//2
 
-        for row in map:
+        for i, row in enumerate(map):
             row_str = ""
-            for col in row:
+            for j, col in enumerate(row):
                 token = None
 
                 entity_type, terrain, entity_int, health_pct, status = col
@@ -134,14 +159,16 @@ class LLMInterfacer:
                     token = "A"
                 elif entity_int == 4:
                     token = "?"
+                
+                if (i-field_view,j-field_view) in player_positions:
+                    token = player_positions[(i-field_view,j-field_view)][0]
 
                 row_str += token
             prompt += row_str + "\n"
         prompt +"\nHere is the legend for the map, note that each tile is 5ft by 5ft:\n"
         prompt += "areas with no characters are represented by a dot (.)\n"
-        prompt += "the hero character is represented by a (P)\n"
-        prompt += "the enemy character is represented by an (E)\n"
-        prompt += "Allies or Party Members are represented by an (A)\n"
+        for name in player_positions.values():
+            prompt += f"{name} is represented by {name[0]}\n"
         prompt += "Neutral characters are represented by a question mark (?)\n"
         prompt += "areas outside of the map are represented by a hash (_), you cannot move to areas with _\n"
         prompt += "areas with obstacles are represented by an asterisk (*)\n"
@@ -293,8 +320,8 @@ class OGPT4Interfacer(LLMInterfacer):
         return prompt
 
 
-    def select_action_for_state(self, state, info, is_conversation = False):
-        state_prompt = self.dndenv_state_to_prompt(state, info)
+    def select_action_for_state(self, state, info, players, is_conversation = False):
+        state_prompt = self.dndenv_state_to_prompt(state, info, players=players)
         if is_conversation:
             assert (conversation !=None)
             prompt = state_prompt + self.communication_prompting()
@@ -361,42 +388,42 @@ class OGPT4Interfacer(LLMInterfacer):
         #     print(f"unusual response: {orig_response}")
         #     action = random.choice(info['available_moves']) # assign random action instead
         arguments = json.loads(chat_completion.choices[0].message.function_call.arguments)
-        action = arguments["action"]
+        print(arguments)
+        action = arguments["action_id"]
         description = arguments["description"]
         explanation = arguments["explanation"]
-        self.update_summary(state_prompt, action, description, explanation)
+        if not is_conversation:
+            self.update_summary(state_prompt, action, description, explanation)
         content = None
         if action == 1000:
             content = arguments["content"]
         return (action, content)
 
-    def dndenv_state_to_prompt(self, state, info):
+    def dndenv_state_to_prompt(self, state, info, players=None):
+        player_positions = {}
+        self_position = None
+        for el in players:
+            if el[2].name == self.name:
+                self_position = (el[3][1], el[3][0])
+        assert(self_position != None)
+        for el in players:
+            player_positions[(el[3][1] - self_position[0], el[3][0] - self_position[1])] = el[2].name
         map = state["map"]
         actions, bonus_actions, reactions = state["turn_info"]
         player_type = state["player_type"][0]
-        enemy_type = state["enemy_type"][0]
-
         entity_mappings = info["entity_mappings"]
         # swap values to keys for entity mappings
         entity_mappings = {v: k for k, v in entity_mappings.items()}
         player_type_str = entity_mappings.get(player_type, "")
-        enemy_type_str = entity_mappings.get(enemy_type, "")
-        # split class type and level from player_type_str separated by a  "-" for example fighter-1
         player_type_str, player_level = player_type_str.split("-")
-        enemy_type_str, enemy_level = enemy_type_str.split("-")
-
         health_pct = state["health_pct"]
-        health_enemy = state["health_enemy"]
         movement = state["movement"]
-
         conditions = state["conditions"]
         is_prone, is_dodging, is_grappled, is_disengaging, _, _, _, _ = conditions
-        is_enemy_prone, is_enemy_dodging, is_enemy_grappled, is_enemy_disengaging, _, _, _, _  = state["enemy_conditions"]
 
-        instruction_prompt = "It is currently your turn\n" + \
-                             f"Your hero character (a level {player_level} {player_type_str}) is denoted by P. And you have an enemy donoted by E (a level {enemy_level} {enemy_type_str})which you must defeat. \n"
+        instruction_prompt = "We are playing a game of Dungeons and Dragons 5th Edition. It is current your turn and you play \n" + \
+                             f"as a hero character denoted by P (a level {player_level} {player_type_str})."
         instruction_prompt += f"Your health is at {health_pct*100}% specifically {info['health']}/{info['max_health']} \n"
-        instruction_prompt += f"Your Enemies health is at {health_enemy*100}%\n"
         instruction_prompt += "Your current conditions are:\n"
         if is_prone:
             instruction_prompt += "Currently Prone\n"
@@ -406,16 +433,47 @@ class OGPT4Interfacer(LLMInterfacer):
 
         if is_disengaging:
             instruction_prompt += "Currently Disengaging\n"
+        
+        
+        
+        enemy_types = state["enemy_type"]
+        health_enemy = state["health_enemy"]
+        instruction_prompt += f"\nYou have as enemies :"
+        for i, name in enumerate(state["enemy_name"]):
+            is_enemy_prone, is_enemy_dodging, is_enemy_grappled, is_enemy_disengaging, _, _, _, _  = state["enemy_conditions"][i]
+            enemy_type_str = entity_mappings.get(enemy_types[i], "")
+            enemy_type_str, enemy_level = enemy_type_str.split("-")
+            instruction_prompt += f"\n - {name} denoted by {name[0]} (a level {enemy_level} {enemy_type_str}).\n    Their health is currently at {health_enemy[i]*100}%."
+            instruction_prompt += "\n    Their current conditions are: "
+            if is_enemy_prone:
+                instruction_prompt += "Currently Prone, "
 
-        instruction_prompt += "Your enemies current conditions are:\n"
-        if is_enemy_prone:
-            instruction_prompt += "Currently Prone\n"
+            if is_enemy_dodging:
+                instruction_prompt += "Currently Dodging, "
 
-        if is_enemy_dodging:
-            instruction_prompt += "Currently Dodging\n"
+            if is_enemy_disengaging:
+                instruction_prompt += "Currently Disengaging"
+        instruction_prompt += "\nYou must defeat all of them in order to win.\n\n"
 
-        if is_enemy_disengaging:
-            instruction_prompt += "Currently Disengaging\n"
+
+        ally_types = state["ally_type"]
+        health_ally = state["health_ally"]
+        if len(ally_types) > 0:
+            instruction_prompt += f"You are helped in that regard by your allies :"
+            for i, name in enumerate(state["ally_name"]):
+                is_ally_prone, is_ally_dodging, is_ally_grappled, is_ally_disengaging, _, _, _, _  = state["ally_conditions"][i]
+                ally_type_str = entity_mappings.get(ally_types[i], "")
+                ally_type_str, ally_level = ally_type_str.split("-")
+                instruction_prompt += f"\n - {name} denoted by {name[0]} (a level {ally_level} {ally_type_str}).\n    Their health is currently at {health_ally[i]*100}%."
+                instruction_prompt += "\n    Their current conditions are: "
+                if is_ally_prone:
+                    instruction_prompt += "Currently Prone, "
+
+                if is_ally_dodging:
+                    instruction_prompt += "Currently Dodging, "
+
+                if is_ally_disengaging:
+                    instruction_prompt += "Currently Disengaging"
 
         instruction_prompt += "You have the following available actions and movement available:\n\n"
         instruction_prompt += f"Available movement: {movement}ft\n"
@@ -426,16 +484,17 @@ class OGPT4Interfacer(LLMInterfacer):
         for level, slots in enumerate(spell_slots):
             if slots > 0:
                 instruction_prompt += f"Spell Slot Level {level + 1}: {slots} slots\n"
-        prompt = instruction_prompt
-        prompt += self.map_to_prompt(map)
+        
 
+        prompt = instruction_prompt
+        prompt += self.map_to_prompt(map, player_positions)
         prompt += "\n Here is a shirt summary of what happened previously :\n"
         prompt += self.summary
         prompt += "\n"
 
         if info.get('trigger', False):
             prompt += f"Note that this is not really your turn but a Reaction for {info['trigger']}:"
-        prompt += actions_to_prompt(info['available_moves'], info["weapon_mappings"], info["spell_mappings"])
+        prompt += actions_to_prompt(info['available_moves'], info["weapon_mappings"], info["spell_mappings"], player_positions)
         prompt += "-1: communicate with my allies\n"
         
         return prompt

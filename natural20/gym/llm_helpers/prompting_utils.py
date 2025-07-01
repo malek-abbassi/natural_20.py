@@ -17,7 +17,7 @@ def _lookup_spell_name(spell_id, spell_mappings=None):
     else:
         return ""
 
-def action_to_prompt(action, weapon_mappings=None, spell_mappings=None):
+def action_to_prompt(action, weapon_mappings=None, spell_mappings=None, player_positions = {}):
     if weapon_mappings is None:
         raise ValueError("weapon_mappings is None")
     if spell_mappings is None:
@@ -46,7 +46,7 @@ def action_to_prompt(action, weapon_mappings=None, spell_mappings=None):
 
     elif action_type == action_type_to_int("attack"):
         attack_name = _look_up_attack_name(param3, weapon_mappings)
-        message = "attack enemy "
+        message = "attack " + (player_positions[(param2[1], param2[0])] if (param2[1], param2[0]) in player_positions else "enemy") + " "
         if param4 == 1:
             message += f"with ranged weapon: {attack_name}"
         else:
@@ -90,10 +90,10 @@ def action_to_prompt(action, weapon_mappings=None, spell_mappings=None):
         raise ValueError(f"Unknown action type {action_type}")
     return message
 
-def actions_to_prompt(actions, weapon_mappings=None, spell_mappings=None):
+def actions_to_prompt(actions, weapon_mappings=None, spell_mappings=None, player_positions={}):
     prompt = "\n\nHere are the available actions you can take, please choose the number corresponding to the action:\n"
     prompt += "0: end my turn\n"
     for index, action in enumerate(actions):
-        message = action_to_prompt(action, weapon_mappings, spell_mappings)
+        message = action_to_prompt(action, weapon_mappings, spell_mappings, player_positions)
         prompt += f"{index + 1}: {message}\n"
     return prompt

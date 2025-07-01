@@ -9,13 +9,29 @@ def enemy_stats(battle, current_player, entity_type_mappings):
     """
     Returns the enemy stats for the current player
     """
+    res = []
     for player in battle.entities.keys():
         if battle.entity_group_for(player) != battle.entity_group_for(current_player):
             enemy_hp = player.hp() / player.max_hp()
             enemy_reactions = player.total_reactions(battle)
             enemy_conditions = condition_stats(player, battle)
-            return enemy_hp, enemy_reactions, enemy_conditions, map_entity_to_index(player, entity_type_mappings), player.armor_class()
-    return 0, 0, np.zeros((8), dtype=np.int64), 0
+            res.append([player.name, enemy_hp, enemy_reactions, enemy_conditions, map_entity_to_index(player, entity_type_mappings), player.armor_class()])
+    if res == []:
+        res.append([0, 0, np.zeros((8), dtype=np.int64), 0])
+    return res
+
+def ally_stats(battle, current_player, entity_type_mappings):
+    """
+    Returns the enemy stats for the current player
+    """
+    res = []
+    for player in battle.entities.keys():
+        if battle.entity_group_for(player) == battle.entity_group_for(current_player) and player != current_player:
+            enemy_hp = player.hp() / player.max_hp()
+            enemy_reactions = player.total_reactions(battle)
+            enemy_conditions = condition_stats(player, battle)
+            res.append([player.name, enemy_hp, enemy_reactions, enemy_conditions, map_entity_to_index(player, entity_type_mappings), player.armor_class()])
+    return res
 
 def condition_stats(entity, battle):
     """
@@ -42,7 +58,23 @@ def build_observation(battle, map, entity, entity_type_mappings, weapon_type_map
     """
     Builds the observation for the environment
     """
-    e_health, e_reactions, e_conditions, enemy_type, e_ac = enemy_stats(battle, entity, entity_type_mappings=entity_type_mappings)
+    e_name, e_health, e_reactions, e_conditions, enemy_type, e_ac = [], [], [], [], [], []
+    for en, eh, er, ec, et, eac in enemy_stats(battle, entity, entity_type_mappings=entity_type_mappings):
+        e_name.append(en)
+        e_health.append(eh)
+        e_reactions.append(er)
+        e_conditions.append(ec)
+        enemy_type.append(et)
+        e_ac.append(eac)
+
+    a_name, a_health, a_reactions, a_conditions, ally_type, a_ac = [], [], [], [], [], []
+    for an, ah, ar, ac, at, aac in ally_stats(battle, entity, entity_type_mappings=entity_type_mappings):
+        a_name.append(an)
+        a_health.append(ah)
+        a_reactions.append(ar)
+        a_conditions.append(ac)
+        ally_type.append(at)
+        a_ac.append(aac)
 
     pc_entity_type = map_entity_to_index(entity, entity_type_mappings)
 
@@ -60,19 +92,26 @@ def build_observation(battle, map, entity, entity_type_mappings, weapon_type_map
         spell_slots[spell_level - 1] = entity.spell_slots_count(spell_level)
 
     obs = {
-        "map": render_terrain(battle, map, entity_type_mappings, view_port_size),
+        "map": render_terrain(battle, map, entity_type_mappings, view_port_size, current_player=entity),
         "turn_info": np.array([entity.total_actions(battle), entity.total_bonus_actions(battle), entity.total_reactions(battle)]),
         "conditions": condition_stats(entity, battle),
         "health_pct": np.array([entity.hp() / entity.max_hp()]),
         "player_equipped": np.array(mapped_equipments),
-        "health_enemy" : np.array([e_health]),
+        "ally_name": np.array(a_name),
+        "enemy_name": np.array(e_name),
+        "ally_reactions": np.array(a_reactions),
+        "health_ally": np.array(a_health),
+        "health_enemy" : np.array(e_health),
+        "ally_conditions": np.array(a_conditions),
         "enemy_conditions": e_conditions,
-        "enemy_reactions" : np.array([e_reactions]),
+        "enemy_reactions" : np.array(e_reactions),
         "player_ac" : np.array([entity.armor_class() / 30.0]),
-        "enemy_ac" : np.array([e_ac / 30.0]),
+        "ally_ac": np.array(a_ac) / 30.0,
+        "enemy_ac" : np.array(e_ac) / 30.0,
         "ability_info": ability_info(entity),
         "player_type": np.array([pc_entity_type]),
-        "enemy_type": np.array([enemy_type]),
+        "ally_type": np.array(ally_type),
+        "enemy_type": np.array(enemy_type),
         "spell_slots" : spell_slots,
         "movement": np.array([battle.current_turn().available_movement(battle)]),
         "is_reaction" : np.array([1 if is_reaction else 0])
@@ -205,9 +244,10 @@ def render_object_token(map, pos_x, pos_y):
     else:
         return object_meta.token()
 
-def render_terrain(battle, map, entity_type_mappings, view_port_size=(12, 12)):
+def render_terrain(battle, map, entity_type_mappings, view_port_size=(12, 12), current_player = None):
     result = []
-    current_player = battle.current_turn()
+    if current_player == None:
+        current_player = battle.current_turn()
     pos_x, pos_y = map.position_of(current_player)
     view_w, view_h = view_port_size
     map_w, map_h = map.size
