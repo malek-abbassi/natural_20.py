@@ -241,7 +241,7 @@ class OGPT4Interfacer(LLMInterfacer):
         self.name = name
         self.memory = []
         self.summary = "This is the first turn of the combat, nothing has happened yet."
-        self.ongoing_conversation = []
+        self.ongoing_conversation = None
         if tools:
             self.tools = [
                 {
@@ -291,6 +291,19 @@ class OGPT4Interfacer(LLMInterfacer):
                         }
                     }
                 }
+            },
+            {
+                "name": "rewrite_summary",
+                "description": "Reads the rewritten summary in order to save it in the memory of the agent.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "summary": {
+                            "type": "string",
+                            "description": "A summary of the situation the agent is in to be used as internal memory of said agent"
+                        }
+                    }
+                }
             }
         ]
     
@@ -323,7 +336,7 @@ class OGPT4Interfacer(LLMInterfacer):
     def select_action_for_state(self, state, info, players, is_conversation = False):
         state_prompt = self.dndenv_state_to_prompt(state, info, players=players)
         if is_conversation:
-            assert (conversation !=None)
+            assert(self.ongoing_conversation != None)
             prompt = state_prompt + self.communication_prompting()
         else:
             prompt = state_prompt + self.action_prompting()
@@ -390,14 +403,26 @@ class OGPT4Interfacer(LLMInterfacer):
         arguments = json.loads(chat_completion.choices[0].message.function_call.arguments)
         print(arguments)
         action = arguments["action_id"]
-        description = arguments["description"]
-        explanation = arguments["explanation"]
+        try :
+            description = arguments["description"]
+        except:
+            description = ""
+        try :
+            explanation = arguments["explanation"]
+        except:
+            explanation = ""
         if not is_conversation:
-            self.update_summary(state_prompt, action, description, explanation)
+            self.update_summary(state, info, action, description, explanation, is_conversation=False, players=players)
         content = None
-        if action == 1000:
-            content = arguments["content"]
-        return (action, content)
+        if action < 0:
+            if action != -3:
+                content = arguments["content"]
+        else:
+            if action == 0:
+                action = (-1, (0, 0), (0, 0), 0, 0)
+            else :
+                action = info['available_moves'][int(action) - 1]
+        return (action, description, content)
 
     def dndenv_state_to_prompt(self, state, info, players=None):
         player_positions = {}
@@ -422,7 +447,7 @@ class OGPT4Interfacer(LLMInterfacer):
         is_prone, is_dodging, is_grappled, is_disengaging, _, _, _, _ = conditions
 
         instruction_prompt = "We are playing a game of Dungeons and Dragons 5th Edition. It is current your turn and you play \n" + \
-                             f"as a hero character denoted by P (a level {player_level} {player_type_str})."
+                             f"as a hero character denoted by {self.name[0]} (a level {player_level} {player_type_str})."
         instruction_prompt += f"Your health is at {health_pct*100}% specifically {info['health']}/{info['max_health']} \n"
         instruction_prompt += "Your current conditions are:\n"
         if is_prone:
@@ -485,6 +510,8 @@ class OGPT4Interfacer(LLMInterfacer):
             if slots > 0:
                 instruction_prompt += f"Spell Slot Level {level + 1}: {slots} slots\n"
         
+        instruction_prompt += "\nNote that discussions are cheap actions and you should therefore not hesitate to communicate once every few round with your allies to corrdinate plans or update them. Although there is no need to chat arounf if you already coordinated.\n"
+        
 
         prompt = instruction_prompt
         prompt += self.map_to_prompt(map, player_positions)
@@ -507,23 +534,23 @@ class OGPT4Interfacer(LLMInterfacer):
     def communication_prompting(self, include_answer_prompting = True):
         prompt = ""
         prompt += "This is not really your turn but rather an ongoing discussion between your allies. Here is the content of the discussion so far :"
-        for speaker, content in self.conversation:
+        for speaker, content in self.ongoing_conversation:
             prompt += f"\n\n{speaker} : {content}"
         if include_answer_prompting:
-            prompt += "\n\nSince this is a conversation, please choose what you want to say in the current situation or if you want to pass the communication. The corresponding actions are\n- -3 : Pass/end the communication\n- -2 : Answer the communication"
+            prompt += "\n\nSince this is a conversation, please choose what you want to say in the current situation or if you want to pass the communication. I you deem that you have no more information to exchange or that you are not concerned by the conversation, do not hesitate to simply pass. No action have been performed since the start of the conversation so once you have figured a plan you need to pass the conversation in order to perform it. The corresponding actions are\n- -3 : Pass/end the communication\n- -2 : Answer the communication"
         return prompt
     
     def register_conversation(self, sender, content):
-        self.conversation.append((sender, content))
+        self.ongoing_conversation.append((sender, content))
     
     def initiate_conversation(self):
-        self.conversation = []
+        self.ongoing_conversation = []
     
-    def close_conversation(self):
-        pass
+    def close_conversation(self, state, info, players):
+        self.update_summary(state, info, None, None, None, True, players)
     
-    def update_summary(self, state, info, action, description, explanation, is_conversation):
-        state_prompt = self.dndenv_state_to_prompt(state, info)
+    def update_summary(self, state, info, action, description, explanation, is_conversation, players=None):
+        state_prompt = self.dndenv_state_to_prompt(state, info, players=players)
         if not is_conversation:
             prompt = state_prompt + f"In this situation you chose to perform the action:\n{action}: {description}\nYour reasonning being : {explanation}"
         else:
@@ -532,15 +559,15 @@ class OGPT4Interfacer(LLMInterfacer):
         # measure gpt-4o response time
         start_time = time.time()
 
-        summary_prompt = f"In the previous message, you can see the current state and decisions that the player '{self.name}' and his party took while playing a Dungeon and Dragon combat encounter. Please rewrite the following summary of '{self.name}' situation in order to accomodate for the evolution of the situation. Give particular care to the intentions and plans for the future that were though of.\n\nThe original summary was :\n{self.summary}"
+        summary_prompt = f"In the previous message, you can see the current state and decisions that the player '{self.name}' and his party took while playing a Dungeon and Dragon combat encounter. Please rewrite the following summary of '{self.name}' situation in order to accomodate for the evolution of the situation. Give particular care to the intentions and future plans that were announced.\n\nThe original summary was :\n{self.summary}"
 
         if self.debug:
-            print(f"prompt: -------------------------------\n{prompt}\n---------------------------------")
+            print(f"Summary prompt: -------------------------------\n{prompt}\n---------------------------------\n\n\n{summary_prompt}\n---------------------------------")
         chat_completion = self.client.chat.completions.create(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are summary tool for a player of Dungeon and Dragon. When given a summary of the previous situation of that player along with the current state and it's most recent decision or conversation, you rewrite the previous summary so as to remove the informations that are no longer true or relevant and add the new informations.\nIn particular, you keep track of the internal chain of thoughs of the player so that he can remember what was his plan.\n\nYou only answer by giving the rewritten summary and no other interaction with the user or explanation."
+                    "content": "You are the internal voice of a player of Dungeon and Dragon. When given a summary of the previous situation of that player along with the current state and it's most recent decision or conversation, you rewrite the previous summary so as to remove the informations that are no longer true or relevant and add the new informations.\nYou do not need to keep track of any specific number or position but instead focus on the internal chain of thoughs of the player so that you can keep track of what was his and his allies plan.\n\nYou only answer by giving the rewritten summary and no other interaction or explanation."
                 },
                 {
                     "role": "user",
@@ -554,9 +581,11 @@ class OGPT4Interfacer(LLMInterfacer):
             model=self.variant,
             functions = self.functions,
             function_call = {
-                "name": "read_action"
+                "name": "rewrite_summary"
             }
         )
+        arguments = json.loads(chat_completion.choices[0].message.function_call.arguments)
+        self.summary = arguments["summary"]
 
 
 
