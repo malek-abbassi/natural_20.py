@@ -124,8 +124,6 @@ class LLMInterfacer:
         return prompt
 
     def map_to_prompt(self, map, player_positions):
-        print("Player positions ========================================================================")
-        print(player_positions)
         prompt =  "\n\nHere is a rough sketch of the map that considers line of sight to the enemy.\n"
 
         prompt += "Here is the map:\n"
