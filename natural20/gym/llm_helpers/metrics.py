@@ -19,8 +19,14 @@ def combat_metrics(env) -> Dict[str, Any]:
     if battle is None:
         raise ValueError("env does not contain a battle")
 
+    players = getattr(env, "players", None)
+    # players is a list of tuples (group_name, group_type, player_name, player_position) where group_type is either "H" (heroes) or "E" (enemies)
+    heroes_groups = {group for group, group_type, _, _ in players if group_type == "H"}
+    if not heroes_groups:
+        raise ValueError("No hero groups found in the battle")
+
     winning_groups = battle.winning_groups()
-    win = any(group in winning_groups for group in env.control_groups)
+    win = any(group in winning_groups for group in heroes_groups)
 
     survivors = {}
     for group, _, player, _ in env.players:
