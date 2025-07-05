@@ -464,13 +464,19 @@ class Npc(Entity, Multiattack, Lootable, EventLoader):
         return False
 
     def from_dict(data):
+        old_uid = data["entity_uid"]
         npc = Npc(data["session"], data["npc_type"], data)
         npc.properties = data["properties"]
         npc._max_hp = data["_max_hp"]
         npc.attributes = data["attributes"]
         npc.inventory = data["inventory"]
         npc.statuses = data["statuses"]
-        npc.entity_uid = data["entity_uid"]
+        npc.entity_uid = str(uuid.uuid4())
         npc.name = data["name"]
         npc.group = data.get("group", "b")
+        
+        # update any lingering references using old uid
+        if npc.properties.get('entity_uid') == old_uid:
+            npc.properties['entity_uid'] = npc.entity_uid
+
         return npc

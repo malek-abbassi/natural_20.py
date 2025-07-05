@@ -636,8 +636,9 @@ class PlayerCharacter(Entity, Fighter, Rogue, Wizard, Cleric, Paladin, Lootable,
 
   def from_dict(data):
     properties = data['properties']
+    old_uid = data['entity_uid']
     player_character = PlayerCharacter(data['session'], properties=properties, name=data['name'])
-    player_character.entity_uid = data['entity_uid']
+    player_character.entity_uid = str(uuid.uuid4())
     player_character.attributes['hp'] = data['hp']
     player_character.inventory = data['inventory']
     player_character.effects = data['effects']
@@ -651,4 +652,18 @@ class PlayerCharacter(Entity, Fighter, Rogue, Wizard, Cleric, Paladin, Lootable,
     player_character.concentration = data['concentration']
     player_character.hidden_stealth = data['hidden_stealth']
     player_character._temp_hp = data['_temp_hp']
+    # update any references that still use the old uid
+    for descriptors in player_character.effects.values():
+      for descriptor in descriptors:
+        if descriptor.get('source') == old_uid:
+          descriptor['source'] = player_character.entity_uid
+        if descriptor.get('target') == old_uid:
+          descriptor['target'] = player_character.entity_uid
+
+    for ce in player_character.casted_effects:
+      if ce.get('source') == old_uid:
+        ce['source'] = player_character.entity_uid
+      if ce.get('target') == old_uid:
+        ce['target'] = player_character.entity_uid
+
     return player_character

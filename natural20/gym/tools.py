@@ -187,25 +187,27 @@ def dndenv_action_to_nat20action(entity, battle, map, available_actions, gym_act
     for action in available_actions:
         # Attack actions
         if (action.action_type == "attack" and action_type == 0) or (action.action_type == "two_weapon_attack" and action_type == 9):
-            if weapon_mappings is not None:
-                weapon_match = False
+            target_pos = map.position_of(action.target)
+            if target_pos == [entity_position[0] + param2[0], entity_position[1] + param2[1]]:
+                if weapon_mappings is not None:
+                    weapon_match = False
 
-                # Determine weapon token name
-                if hasattr(action, 'using') and action.using in weapon_mappings:
-                    weapon_match = weapon_mappings[action.using] == param3
-                elif getattr(action, 'npc_action', None):
-                    token_name = f"{entity.npc_type}_{action.npc_action['name']}".lower()
-                    if token_name in weapon_mappings:
-                        weapon_match = weapon_mappings[token_name] == param3
-                    else:
-                        raise ValueError(f"Unknown weapon token {token_name}")
+                    # Determine weapon token name
+                    if hasattr(action, 'using') and action.using in weapon_mappings:
+                        weapon_match = weapon_mappings[action.using] == param3
+                    elif getattr(action, 'npc_action', None):
+                        token_name = f"{entity.npc_type}_{action.npc_action['name']}".lower()
+                        if token_name in weapon_mappings:
+                            weapon_match = weapon_mappings[token_name] == param3
+                        else:
+                            raise ValueError(f"Unknown weapon token {token_name}")
 
-                # Check weapon and attack type match
-                # print(f"weapon_match: {weapon_match}, param4: {param4}, ranged_attack: {action.ranged_attack()}")
-                if weapon_match and (param4 == 0 or (param4 == 1 and action.ranged_attack())):
+                    # Check weapon and attack type match
+                    # print(f"weapon_match: {weapon_match}, param4: {param4}, ranged_attack: {action.ranged_attack()}")
+                    if weapon_match and (param4 == 0 or (param4 == 1 and action.ranged_attack())):
+                        return action
+                elif param3 == 0 or (param4 == 1 and action.ranged_attack()):
                     return action
-            elif param3 == 0 or (param4 == 1 and action.ranged_attack()):
-                return action
 
         # Move action
         elif action.action_type == "move" and action_type == 1:

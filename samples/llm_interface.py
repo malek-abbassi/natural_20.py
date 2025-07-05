@@ -26,7 +26,7 @@ class LLMInterfacer:
     def dndenv_state_to_prompt(self, state, info, players=None):
         player_positions = {}
         for el in players:
-            player_positions[(el[3][0], el[3][1])] = el[2].name
+            player_positions[(el[3][1], el[3][0])] = el[2].name
         map = state["map"]
         actions, bonus_actions, reactions = state["turn_info"]
         player_type = state["player_type"][0]
@@ -154,9 +154,9 @@ class LLMInterfacer:
                 if entity_int == 1:
                     token = "P"
                 elif entity_int == 2:
-                    token = "E"
+                    token = "K"
                 elif entity_int == 3:
-                    token = "A"
+                    token = "L"
                 elif entity_int == 4:
                     token = "?"
                 
@@ -333,8 +333,8 @@ class OGPT4Interfacer(LLMInterfacer):
         return prompt
 
 
-    def select_action_for_state(self, state, info, players, is_conversation = False):
-        state_prompt = self.dndenv_state_to_prompt(state, info, players=players)
+    def select_action_for_state(self, state, info, players_pos, is_conversation = False):
+        state_prompt = self.dndenv_state_to_prompt(state, info, players_pos=players_pos)
         if is_conversation:
             assert(self.ongoing_conversation != None)
             prompt = state_prompt + self.communication_prompting()
@@ -412,7 +412,7 @@ class OGPT4Interfacer(LLMInterfacer):
         except:
             explanation = ""
         if not is_conversation:
-            self.update_summary(state, info, action, description, explanation, is_conversation=False, players=players)
+            self.update_summary(state, info, action, description, explanation, is_conversation=False, players_pos=players_pos)
         content = None
         if action < 0:
             if action != -3:
@@ -424,15 +424,10 @@ class OGPT4Interfacer(LLMInterfacer):
                 action = info['available_moves'][int(action) - 1]
         return (action, description, content)
 
-    def dndenv_state_to_prompt(self, state, info, players=None):
-        player_positions = {}
-        self_position = None
-        for el in players:
-            if el[2].name == self.name:
-                self_position = (el[3][1], el[3][0])
-        assert(self_position != None)
-        for el in players:
-            player_positions[(el[3][1] - self_position[0], el[3][0] - self_position[1])] = el[2].name
+    def dndenv_state_to_prompt(self, state, info, players_pos=None):
+        player_positions = {player.name : (pos[1], pos[0]) for player, pos in players_pos.items()}
+        self_position = player_positions[self.name]
+        rel_player_positions = {(pos[0]-self_position[0], pos[1] - self_position[1]): player for player,pos in player_positions.items()}
         map = state["map"]
         actions, bonus_actions, reactions = state["turn_info"]
         player_type = state["player_type"][0]
@@ -514,14 +509,14 @@ class OGPT4Interfacer(LLMInterfacer):
         
 
         prompt = instruction_prompt
-        prompt += self.map_to_prompt(map, player_positions)
+        prompt += self.map_to_prompt(map, rel_player_positions)
         prompt += "\n Here is a shirt summary of what happened previously :\n"
         prompt += self.summary
         prompt += "\n"
 
         if info.get('trigger', False):
             prompt += f"Note that this is not really your turn but a Reaction for {info['trigger']}:"
-        prompt += actions_to_prompt(info['available_moves'], info["weapon_mappings"], info["spell_mappings"], player_positions)
+        prompt += actions_to_prompt(info['available_moves'], info["weapon_mappings"], info["spell_mappings"], rel_player_positions)
         prompt += "-1: communicate with my allies\n"
         
         return prompt
@@ -546,11 +541,11 @@ class OGPT4Interfacer(LLMInterfacer):
     def initiate_conversation(self):
         self.ongoing_conversation = []
     
-    def close_conversation(self, state, info, players):
-        self.update_summary(state, info, None, None, None, True, players)
+    def close_conversation(self, state, info, players_pos):
+        self.update_summary(state, info, None, None, None, True, players_pos)
     
-    def update_summary(self, state, info, action, description, explanation, is_conversation, players=None):
-        state_prompt = self.dndenv_state_to_prompt(state, info, players=players)
+    def update_summary(self, state, info, action, description, explanation, is_conversation, players_pos=None):
+        state_prompt = self.dndenv_state_to_prompt(state, info, players_pos=players_pos)
         if not is_conversation:
             prompt = state_prompt + f"In this situation you chose to perform the action:\n{action}: {description}\nYour reasonning being : {explanation}"
         else:
