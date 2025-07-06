@@ -216,7 +216,7 @@ class OllamaInterfacer(LLMInterfacer):
 
 
 
-class OGPT4Interfacer(LLMInterfacer):
+class MultiGPT4Interfacer(LLMInterfacer):
     def __init__(self, variant="gpt-4.1", debug=False, api_key=None, base_url=None, tools=False, explain=False, weapon_mappings=None, max_retries=4, name="Bob"):
         """
         Args:
@@ -239,8 +239,7 @@ class OGPT4Interfacer(LLMInterfacer):
             max_retries=max_retries
         )
         self.name = name
-        self.memory = []
-        self.summary = "This is the first turn of the combat, nothing has happened yet."
+        self.summary = "This is the first turn of the combat, nothing has happened yet. You haven't done any plan with you allies yet."
         self.ongoing_conversation = None
         if tools:
             self.tools = [
@@ -311,25 +310,6 @@ class OGPT4Interfacer(LLMInterfacer):
     def make_dev_prompt(self):
         prompt = ""
         prompt += f"We are playing a game of Dungeons and Dragons 5th Edition. You play and are referred to as {self.name}.\n"
-        # prompt += f"The user will be giving you details on the current situation that your character is in along with a short summary of what happened previously. He will then ask you whether you want to take actions or not.\n"
-        # prompt += f"You will communicate your will by using a properly formatted JSON schema given to you. Do not generate output that isn’t in properly formatted JSON.\n"
-        # prompt += "\n\n\n"
-        # prompt += "Here is an example of the format you should use for your answers :\n\n"
-        # prompt += """
-        # {
-        #     "action": number corresponding to the desired action,
-        #     "description": string that explains the action,
-        #     "content": in case the chosen action is a communication, string containing the message to send to your allies,
-        # }
-        # """
-        # prompt += "\n\nHere is an example of how to use it :\n"
-        # prompt += """
-        # {
-        #     "action": <choice no.>,
-        #     "description": <choice description>,
-        #     "content": "I should have enough damage on my turn to deal with the gobelin, you can consider him dealt with and focus on the troll.
-        # }
-        # """
         return prompt
 
 
@@ -363,45 +343,9 @@ class OGPT4Interfacer(LLMInterfacer):
                 "name": "read_action"
             }
         )
-        # if self.tools:
-        #     orig_response = chat_completion.choices[0].message.tool_calls[0].function.arguments
-            
-        # else:
-        #     orig_response = chat_completion.choices[0].message.content
-        #     digit_response = ""
-
-        #     # skip the initial non-digit characters
-        #     encountered_digit = False
-
-        #     for char in orig_response:
-        #         if char.isdigit():
-        #             encountered_digit = True
-        #             digit_response += char
-        #         else:
-        #             if encountered_digit:
-        #                 break
-
-        # try:
-        #     if self.tools:
-        #         json_response = json.loads(orig_response)
-        #         if self.debug:
-        #             print(json_response)
-        #         digit_response = json_response['action']
-
-        #     end_time = time.time()
-        #     if self.debug:
-        #         print(f"response time: {end_time - start_time}")
-
-        #     if int(digit_response) == 0:
-        #         action = (-1, (0, 0), (0, 0), 0, 0)
-        #     else:
-        #         action = info['available_moves'][int(digit_response) - 1]
-        # except Exception as e:
-        #     print(e)
-        #     print(f"unusual response: {orig_response}")
-        #     action = random.choice(info['available_moves']) # assign random action instead
         arguments = json.loads(chat_completion.choices[0].message.function_call.arguments)
-        print(arguments)
+        if self.debug:
+            print(arguments)
         action = arguments["action_id"]
         try :
             description = arguments["description"]
@@ -584,7 +528,226 @@ class OGPT4Interfacer(LLMInterfacer):
 
 
 
+class SoloGPT4Interfacer(LLMInterfacer):
+    def __init__(self, variant="gpt-4.1", debug=False, api_key=None, base_url=None, tools=False, explain=False, weapon_mappings=None, max_retries=4, name="Bob"):
+        """
+        Args:
+            api_key: the openai api key to use
+            variant: the variant of the model to use, e.g. gpt-4o, gpt-4, etc.
+            debug: whether to print debug information
+        """
+        super().__init__(debug, explain=explain)
 
+        if api_key is None and base_url is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if api_key is None:
+                raise ValueError("Please set the OPENAI_API_KEY environment variable")
+
+        self.variant = variant
+        self.debug = debug
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            max_retries=max_retries
+        )
+        self.name = name
+        if tools:
+            self.tools = [
+                {
+                    "type": "function",
+                    "function": {
+                    "name": "get_action",
+                    "description": "get action for agent to execute",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                        "action": {
+                            "type": "integer",
+                            "description": "action to take",
+                        }
+                        },
+                        "required": ["action"],
+                    },
+                    }
+                }
+            ]
+        else:
+            self.tools = None
+        self.dev_prompt = self.make_dev_prompt()
+
+        self.functions = [
+            {
+                "name": "read_action",
+                "description": "Reads the action the character wants to perform in order to communicate it to the simulation.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action_id": {
+                            "type": "integer",
+                            "description": "Identifier of the chosen action as indicated in the last message"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Decription of the chosen action as indicated in the last message"
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "Explanation of why you decided to make this action"
+                        }
+                    }
+                }
+            }
+        ]
+    
+
+    def make_dev_prompt(self):
+        prompt = ""
+        prompt += f"We are playing a game of Dungeons and Dragons 5th Edition. You play and are referred to as {self.name}.\n"
+        return prompt
+
+
+    def select_action_for_state(self, state, info, players_pos, **kwargs):
+        state_prompt = self.dndenv_state_to_prompt(state, info, players_pos=players_pos)
+        prompt = state_prompt + self.action_prompting()
+        
+        # measure gpt-4o response time
+        start_time = time.time()
+
+        if self.debug:
+            print(f"prompt: -------------------------------\n{prompt}\n---------------------------------")
+        chat_completion = self.client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": self.dev_prompt
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model=self.variant,
+            functions = self.functions,
+            function_call = {
+                "name": "read_action"
+            }
+        )
+        arguments = json.loads(chat_completion.choices[0].message.function_call.arguments)
+        if self.debug:
+            print(arguments)
+        action = arguments["action_id"]
+        try :
+            description = arguments["description"]
+        except:
+            description = ""
+        try :
+            explanation = arguments["explanation"]
+        except:
+            explanation = ""
+        content = None
+        if action < 0:
+            raise ValueError("A discussion action was picked by the non-multi-agent agent of", self.name)
+        else:
+            if action == 0:
+                action = (-1, (0, 0), (0, 0), 0, 0)
+            else :
+                action = info['available_moves'][int(action) - 1]
+        return (action, description, content)
+
+    def dndenv_state_to_prompt(self, state, info, players_pos=None):
+        player_positions = {player.name : (pos[1], pos[0]) for player, pos in players_pos.items()}
+        self_position = player_positions[self.name]
+        rel_player_positions = {(pos[0]-self_position[0], pos[1] - self_position[1]): player for player,pos in player_positions.items()}
+        map = state["map"]
+        actions, bonus_actions, reactions = state["turn_info"]
+        player_type = state["player_type"][0]
+        entity_mappings = info["entity_mappings"]
+        # swap values to keys for entity mappings
+        entity_mappings = {v: k for k, v in entity_mappings.items()}
+        player_type_str = entity_mappings.get(player_type, "")
+        player_type_str, player_level = player_type_str.split("-")
+        health_pct = state["health_pct"]
+        movement = state["movement"]
+        conditions = state["conditions"]
+        is_prone, is_dodging, is_grappled, is_disengaging, _, _, _, _ = conditions
+
+        instruction_prompt = "We are playing a game of Dungeons and Dragons 5th Edition. It is current your turn and you play \n" + \
+                             f"as a hero character denoted by {self.name[0]} (a level {player_level} {player_type_str})."
+        instruction_prompt += f"Your health is at {health_pct*100}% specifically {info['health']}/{info['max_health']} \n"
+        instruction_prompt += "Your current conditions are:\n"
+        if is_prone:
+            instruction_prompt += "Currently Prone\n"
+
+        if is_dodging:
+            instruction_prompt += "Currently Dodging\n"
+
+        if is_disengaging:
+            instruction_prompt += "Currently Disengaging\n"
+        
+        
+        
+        enemy_types = state["enemy_type"]
+        health_enemy = state["health_enemy"]
+        instruction_prompt += f"\nYou have as enemies :"
+        for i, name in enumerate(state["enemy_name"]):
+            is_enemy_prone, is_enemy_dodging, is_enemy_grappled, is_enemy_disengaging, _, _, _, _  = state["enemy_conditions"][i]
+            enemy_type_str = entity_mappings.get(enemy_types[i], "")
+            enemy_type_str, enemy_level = enemy_type_str.split("-")
+            instruction_prompt += f"\n - {name} denoted by {name[0]} (a level {enemy_level} {enemy_type_str}).\n    Their health is currently at {health_enemy[i]*100}%."
+            instruction_prompt += "\n    Their current conditions are: "
+            if is_enemy_prone:
+                instruction_prompt += "Currently Prone, "
+
+            if is_enemy_dodging:
+                instruction_prompt += "Currently Dodging, "
+
+            if is_enemy_disengaging:
+                instruction_prompt += "Currently Disengaging"
+        instruction_prompt += "\nYou must defeat all of them in order to win.\n\n"
+
+
+        ally_types = state["ally_type"]
+        health_ally = state["health_ally"]
+        if len(ally_types) > 0:
+            instruction_prompt += f"You are helped in that regard by your allies :"
+            for i, name in enumerate(state["ally_name"]):
+                is_ally_prone, is_ally_dodging, is_ally_grappled, is_ally_disengaging, _, _, _, _  = state["ally_conditions"][i]
+                ally_type_str = entity_mappings.get(ally_types[i], "")
+                ally_type_str, ally_level = ally_type_str.split("-")
+                instruction_prompt += f"\n - {name} denoted by {name[0]} (a level {ally_level} {ally_type_str}).\n    Their health is currently at {health_ally[i]*100}%."
+                instruction_prompt += "\n    Their current conditions are: "
+                if is_ally_prone:
+                    instruction_prompt += "Currently Prone, "
+
+                if is_ally_dodging:
+                    instruction_prompt += "Currently Dodging, "
+
+                if is_ally_disengaging:
+                    instruction_prompt += "Currently Disengaging"
+
+        instruction_prompt += "You have the following available actions and movement available:\n\n"
+        instruction_prompt += f"Available movement: {movement}ft\n"
+        instruction_prompt += f"Available actions: {actions}\n"
+        instruction_prompt += f"Bonus actions: {bonus_actions}\n"
+        instruction_prompt += f"Reactions: {reactions}\n\n"
+        spell_slots = state["spell_slots"]
+        for level, slots in enumerate(spell_slots):
+            if slots > 0:
+                instruction_prompt += f"Spell Slot Level {level + 1}: {slots} slots\n"
+        
+
+        prompt = instruction_prompt
+        prompt += self.map_to_prompt(map, rel_player_positions)
+
+        if info.get('trigger', False):
+            prompt += f"Note that this is not really your turn but a Reaction for {info['trigger']}:"
+        prompt += actions_to_prompt(info['available_moves'], info["weapon_mappings"], info["spell_mappings"], rel_player_positions)
+        return prompt
+
+    def action_prompting(self):
+        prompt = ""
+        prompt += "\n\nPlease choose what you want to do in this situation by using the JSON format given to you before."
+        return prompt
 
 
 
