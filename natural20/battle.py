@@ -165,6 +165,7 @@ class Battle:
         self.current_turn_index = 0
 
         if combat_order:
+            print("Je suis chiant")
             self.combat_order = combat_order
             return
 

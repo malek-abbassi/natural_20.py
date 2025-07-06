@@ -331,13 +331,13 @@ class dndenv(gym.Env):
         self.players = []
         self.current_round = 0
         self.terminal = False
-
+        print(kwargs)
         if self.custom_initializer:
             initiative_order = self.custom_initializer(self)
         else:
-            initiative_order = self._setup_up_default_1v1(reaction_callback=reactions_callback)
+            initiative_order = self._setup_up_default_1v1(reaction_callback=reactions_callback, init_poses= kwargs["options"].get("initial_poses", None) if kwargs["options"] != None else None)
 
-        self.battle.start(combat_order=initiative_order)
+        self.battle.start(combat_order=initiative_order, custom_initiative=kwargs["options"].get("initiative", None) if kwargs["options"] != None else None)
         self.battle.start_turn()
         if self.battle.current_turn().conscious():
                 self.battle.current_turn().reset_turn(self.battle)
@@ -415,7 +415,7 @@ class dndenv(gym.Env):
                 break
         return current_player, result
     
-    def _setup_up_default_1v1(self, reaction_callback=None):
+    def _setup_up_default_1v1(self, reaction_callback=None, init_poses= None):
         enemy_pos = None
         player_pos = None
 
@@ -442,6 +442,8 @@ class dndenv(gym.Env):
                 pc = PlayerCharacter.load(self.session, f'{character_sheet_path}/{p}', { "name" : name})
             self._describe_hero(pc)
             # set random starting positions, make sure there are no obstacles in the map
+            if init_poses:
+                player_pos = init_poses[0][index]
             while player_pos is None or not self.map.placeable(pc, player_pos[0], player_pos[1]):
                 # trunk-ignore(bandit/B311)
                 player_pos = [random.randint(0, self.map.size[0] - 1), random.randint(0, self.map.size[1] - 1)]
@@ -461,6 +463,8 @@ class dndenv(gym.Env):
                 pc = PlayerCharacter.load(self.session, f'{character_sheet_path}/{p}', {"name":  name})
 
             self._describe_hero(pc)
+            if init_poses:
+                player_pos = init_poses[1][index]
             while enemy_pos is None or enemy_pos==player_pos or not self.map.placeable(pc, enemy_pos[0], enemy_pos[1]):
                 enemy_pos = [random.randint(0, self.map.size[0] - 1), random.randint(0, self.map.size[1] - 1)]
             self.players.append(('b', 'E', pc , enemy_pos))
