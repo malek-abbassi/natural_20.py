@@ -1,7 +1,7 @@
 from typing import Dict, Any
 
 
-def combat_metrics(env) -> Dict[str, Any]:
+def combat_metrics(env, agents) -> Dict[str, Any]:
     """Compute basic metrics for a finished dndenv combat.
 
     Args:
@@ -21,17 +21,31 @@ def combat_metrics(env) -> Dict[str, Any]:
 
     players = getattr(env, "players", None)
     # players is a list of tuples (group_name, group_type, player_name, player_position) where group_type is either "H" (heroes) or "E" (enemies)
-    heroes_groups = {group for group, group_type, _, _ in players if group_type == "H"}
-    if not heroes_groups:
+    # we will assume there are only two groups: the LLM-controlled groups (heroes) and the enemy groups
+    heroes_group = {
+        group for group, group_type, _, _ in players if group_type == "H"
+    }.pop()
+    enemies_group = {
+        group for group, group_type, _, _ in players if group_type == "E"
+    }.pop()
+    if not heroes_group:
         raise ValueError("No hero groups found in the battle")
+    if not enemies_group:
+        raise ValueError("No enemy groups found in the battle")
 
     winning_groups = battle.winning_groups()
-    win = any(group in winning_groups for group in heroes_groups)
+    win = False
+    if heroes_group in winning_groups and len(winning_groups) == 1:
+        win = True
 
     survivors = {}
-    for group, _, player, _ in env.players:
-        if group in env.control_groups and not player.dead():
-            survivors[player.name] = (player.hp(), player.max_hp())
+    for _, group_name, character in agents.values():
+        if group_name == heroes_group:
+            # Only consider heroes for survivor metrics
+            hp = character.hp()
+            max_hp = character.max_hp()
+            if hp > 0:
+                survivors[character.name] = (hp, max_hp)
 
     return {
         "win": win,
