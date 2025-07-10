@@ -464,7 +464,7 @@ class dndenv(gym.Env):
 
             self._describe_hero(pc)
             if init_poses:
-                player_pos = init_poses[1][index]
+                enemy_pos = init_poses[1][index]
             while enemy_pos is None or enemy_pos==player_pos or not self.map.placeable(pc, enemy_pos[0], enemy_pos[1]):
                 enemy_pos = [random.randint(0, self.map.size[0] - 1), random.randint(0, self.map.size[1] - 1)]
             self.players.append(('b', 'E', pc , enemy_pos))

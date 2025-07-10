@@ -108,7 +108,7 @@ else :
     
     metrics = combat_metrics(expe.dnd_environment, agents)
     score = combat_score(metrics)
-    res = {"a":a_player, "b":e_player, "conversations":expe.conversations, "metrics":metrics, "score": score}
+    res = {"a":a_player, "b":e_player, "conversations":expe.conversations, "metrics":metrics, "score": score, "backlog":expe.backlog}
 
     with open(result_path, "wb") as f:
         pkl.dump(res, f)
